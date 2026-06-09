@@ -20,16 +20,23 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   }
 
   void _navigateToActiveScreen() {
-    // Navigasi dengan animasi transisi memudar (Fade) setelah tombol kirim ditekan
+    // Ambil teks yang sempat diketik user di depan
+    final startingText = _chatController.text;
     Navigator.push(
       context,
       PageRouteBuilder(
-        pageBuilder: (context, animation, secondaryAnimation) => const ActiveTypingScreen(),
+        // KIRIMKAN teksnya ke parameter initialText di ActiveTypingScreen
+        pageBuilder: (context, animation, secondaryAnimation) => ActiveTypingScreen(
+          initialText: startingText,
+        ),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           return FadeTransition(opacity: animation, child: child);
         },
       ),
-    );
+    ).then((_) {
+      // BONUS UX: Saat user kembali ke WelcomeScreen nanti, kolom input di depan otomatis bersih
+      _chatController.clear();
+    });
   }
 
   @override

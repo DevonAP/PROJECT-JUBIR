@@ -6,22 +6,39 @@ import '../../../features/tts_voice/controller/tts_controller.dart';
 
 // Ubah menjadi ConsumerStatefulWidget agar bisa membaca Riverpod
 class ActiveTypingScreen extends ConsumerStatefulWidget {
-  const ActiveTypingScreen({super.key});
+  final String? initialText;
+  const ActiveTypingScreen({super.key, this.initialText});
 
   @override
   ConsumerState<ActiveTypingScreen> createState() => _ActiveTypingScreenState();
 }
 
 class _ActiveTypingScreenState extends ConsumerState<ActiveTypingScreen> {
-  final TextEditingController _textController = TextEditingController();
+  late final TextEditingController _textController;
 
   @override
   void initState() {
     super.initState();
-    // Setiap kali user ngetik di keyboard, laporkan ke Riverpod!
+    
+    // 1. Ambil teks awal, jika tidak kosong dan belum ada spasi di ujungnya, tambahkan spasi secara otomatis
+    String initialText = widget.initialText ?? "";
+    if (initialText.isNotEmpty && !initialText.endsWith(" ")) {
+      initialText = "$initialText ";
+    }
+
+    // 2. Masukkan teks yang sudah siap (ber-spasi) ke controller
+    _textController = TextEditingController(text: initialText);
+
+    // 3. Laporkan ke Riverpod sejak frame pertama agar prediksi langsung muncul
+    if (initialText.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ref.read(inputTextProvider.notifier).updateText(initialText);
+      });
+    }
+
+    // Listener keyboard bawaan untuk ketikan manual
     _textController.addListener(() {
-      ref.read(inputTextProvider.notifier)
-    .updateText(_textController.text);
+      ref.read(inputTextProvider.notifier).updateText(_textController.text);
     });
   }
 
@@ -166,9 +183,25 @@ class _ActiveTypingScreenState extends ConsumerState<ActiveTypingScreen> {
       style: ElevatedButton.styleFrom(backgroundColor: AppColors.backspaceBackground),
       onPressed: () {
         if (_textController.text.isNotEmpty) {
-          // Logika hapus karakter (bisa dikembangkan jadi hapus kata penuh nanti)
-          _textController.text = _textController.text.substring(0, _textController.text.length - 1);
-          _textController.selection = TextSelection.fromPosition(TextPosition(offset: _textController.text.length));
+          // Bersihkan spasi di paling kanan terlebih dahulu untuk mendeteksi kata terakhir
+          final currentText = _textController.text.trimRight();
+          
+          // Cari posisi spasi terakhir sebelum kata paling ujung
+          final lastSpaceIndex = currentText.lastIndexOf(' ');
+          
+          if (lastSpaceIndex == -1) {
+            // Jika tidak ada spasi sama sekali (artinya hanya tersisa 1 kata), langsung kosongkan
+            _textController.clear();
+          } else {
+            // Potong kalimat sampai spasi terakhir tersebut, lalu beri spasi penutup lagi 
+            // supaya fitur prediksi kata berikutnya langsung aktif kembali
+            _textController.text = "${currentText.substring(0, lastSpaceIndex)} ";
+          }
+          
+          // Selalu pastikan posisi kursor teks berada di paling kanan
+          _textController.selection = TextSelection.fromPosition(
+            TextPosition(offset: _textController.text.length),
+          );
         }
       },
       child: const Icon(Icons.backspace_outlined, color: AppColors.textPrimary),
