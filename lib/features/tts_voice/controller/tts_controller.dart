@@ -1,10 +1,16 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:riverpod_annotation/riverpod_annotation.dart';
+// file: lib/features/tts_voice/controller/tts_controller.dart
+
+import 'package:flutter/material.dart';
 import '../service/tts_service.dart';
 
-part 'tts_controller.g.dart';
+class TtsController extends ChangeNotifier {
+  final TtsService _ttsService = TtsService();
 
-@riverpod
-TtsService ttsVoice(Ref ref) {
-  return TtsService();
+  // Fungsi yang akan dipanggil oleh tombol FAB di UI
+  Future<void> speak(String text) async {
+    await _ttsService.speak(text);
+    
+    // Jika ke depannya Anda butuh animasi "sedang bicara", 
+    // Anda bisa menambahkan variabel boolean dan memanggil notifyListeners() di sini.
+  }
 }

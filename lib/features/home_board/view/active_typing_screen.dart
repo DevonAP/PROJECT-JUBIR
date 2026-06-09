@@ -1,44 +1,39 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:provider/provider.dart';
 import '../../../core/constants.dart';
 import '../../word_prediction/controller/prediction_controller.dart';
 import '../../../features/tts_voice/controller/tts_controller.dart';
 
-// Ubah menjadi ConsumerStatefulWidget agar bisa membaca Riverpod
-class ActiveTypingScreen extends ConsumerStatefulWidget {
+class ActiveTypingScreen extends StatefulWidget {
   final String? initialText;
   const ActiveTypingScreen({super.key, this.initialText});
 
   @override
-  ConsumerState<ActiveTypingScreen> createState() => _ActiveTypingScreenState();
+  State<ActiveTypingScreen> createState() => _ActiveTypingScreenState();
 }
 
-class _ActiveTypingScreenState extends ConsumerState<ActiveTypingScreen> {
+class _ActiveTypingScreenState extends State<ActiveTypingScreen> {
   late final TextEditingController _textController;
 
   @override
   void initState() {
     super.initState();
     
-    // 1. Ambil teks awal, jika tidak kosong dan belum ada spasi di ujungnya, tambahkan spasi secara otomatis
     String initialText = widget.initialText ?? "";
     if (initialText.isNotEmpty && !initialText.endsWith(" ")) {
       initialText = "$initialText ";
     }
 
-    // 2. Masukkan teks yang sudah siap (ber-spasi) ke controller
     _textController = TextEditingController(text: initialText);
 
-    // 3. Laporkan ke Riverpod sejak frame pertama agar prediksi langsung muncul
     if (initialText.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        ref.read(inputTextProvider.notifier).updateText(initialText);
+        context.read<PredictionController>().updateText(initialText);
       });
     }
 
-    // Listener keyboard bawaan untuk ketikan manual
     _textController.addListener(() {
-      ref.read(inputTextProvider.notifier).updateText(_textController.text);
+      context.read<PredictionController>().updateText(_textController.text);
     });
   }
 
@@ -48,28 +43,39 @@ class _ActiveTypingScreenState extends ConsumerState<ActiveTypingScreen> {
     super.dispose();
   }
 
-  // Fungsi saat tombol prediksi ditekan
   void _addWordToInput(String word) {
     final currentText = _textController.text;
-    // Tambahkan kata baru dan beri spasi
     final newText = currentText.isEmpty ? "$word " : "$currentText$word ";
     
     _textController.text = newText;
-    // Pindahkan kursor ke ujung kanan
     _textController.selection = TextSelection.fromPosition(TextPosition(offset: newText.length));
+
+    final words = newText.trim().split(' ');
+    if (words.length >= 2) {
+      final prevWord = words[words.length - 2]; 
+      final currentWord = words[words.length - 1]; 
+      
+      context.read<PredictionController>().learnUserHabit(prevWord, currentWord);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    // Pantau daftar prediksi dari database secara live!
-    final predictions = ref.watch(predictionListProvider);
-
-    final inputText = ref.watch(inputTextProvider);
+    final predictionCtrl = context.watch<PredictionController>();
+    final predictions = predictionCtrl.predictions;
+    final inputText = predictionCtrl.inputText;
 
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: const Text('Ruang Bicara', style: TextStyle(color: AppColors.textPrimary)),
+        title: const Text(
+          'JUBIR',
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            color: AppColors.textPrimary,
+            letterSpacing: 1.5,
+          ),
+        ),
         centerTitle: true,
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -79,7 +85,7 @@ class _ActiveTypingScreenState extends ConsumerState<ActiveTypingScreen> {
         child: Column(
           children: [
             // ==========================================
-            // 1. AREA TEKS UTAMA (Bukan TextField, hanya Tampilan)
+            // 1. AREA TEKS UTAMA 
             // ==========================================
             Expanded(
               child: Container(
@@ -94,29 +100,24 @@ class _ActiveTypingScreenState extends ConsumerState<ActiveTypingScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
-                      // Teksnya sekarang membaca dari Riverpod, bukan teks statis lagi!
                       child: Text(
                         inputText.isEmpty 
                             ? "Ketik sesuatu..." 
                             : inputText,
                         style: Theme.of(context).textTheme.displaySmall?.copyWith(
                           color: inputText.isEmpty 
-                              ? AppColors.textSecondary // Abu-abu kalau kosong
-                              : AppColors.textPrimary, // Gelap kalau ada isinya
+                              ? AppColors.textSecondary 
+                              : AppColors.textPrimary, 
                         ),
                       ),
                     ),
                     Align(
                       alignment: Alignment.bottomRight,
                       child: FloatingActionButton(
-                        backgroundColor: AppColors.primary, // Sesuaikan warna tema kamu
+                        backgroundColor: AppColors.primary, 
                         onPressed: () {
-                          // Ambil teks yang ada di Riverpod saat ini
-                          final textToSpeak = ref.read(inputTextProvider);
-
-                          // Panggil fitur suara AI untuk membacakannya
-                          ref.read(ttsVoiceProvider).speak(textToSpeak);
-
+                          final textToSpeak = context.read<PredictionController>().inputText;
+                          context.read<TtsController>().speak(textToSpeak);
                           _textController.clear();
                         },
                         child: const Icon(Icons.volume_up, color: Colors.white),
@@ -128,10 +129,10 @@ class _ActiveTypingScreenState extends ConsumerState<ActiveTypingScreen> {
             ),
 
             // ==========================================
-            // 2. GRID 6 TOMBOL PREDIKSI 
+            // 2. GRID 6 TOMBOL PREDIKSI (HANYA KATA)
             // ==========================================
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: AppSizes.p16, vertical: AppSizes.p8),
+              padding: const EdgeInsets.symmetric(horizontal: AppSizes.p16),
               child: GridView.count(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
@@ -140,23 +141,30 @@ class _ActiveTypingScreenState extends ConsumerState<ActiveTypingScreen> {
                 crossAxisSpacing: AppSizes.p8,
                 childAspectRatio: 2.5,
                 children: [
-                  // Loop 5 kata dari database (Data dummy Riverpod)
-                  ...predictions.take(5).map((word) => _buildPredictionButton(word)),
-                  // Tombol ke-6 khusus Backspace
-                  _buildBackspaceButton(),
+                  // Sekarang AI bisa memunculkan 6 kata sekaligus!
+                  ...predictions.take(6).map((word) => _buildPredictionButton(word)),
                 ],
               ),
             ),
 
             // ==========================================
-            // 3. AREA KEYBOARD (Input Fisik)
+            // 3. TOMBOL HAPUS KATA (STATIS DI BAWAH GRID)
+            // ==========================================
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(AppSizes.p16, AppSizes.p8, AppSizes.p16, AppSizes.p8),
+              child: _buildBackspaceButton(),
+            ),
+
+            // ==========================================
+            // 4. AREA KEYBOARD
             // ==========================================
             Container(
               color: AppColors.surface,
               padding: const EdgeInsets.symmetric(horizontal: AppSizes.p16),
               child: TextField(
                 controller: _textController,
-                autofocus: true, // Otomatis buka keyboard
+                autofocus: true, 
                 decoration: const InputDecoration(
                   hintText: "Ketik via keyboard...",
                   border: InputBorder.none,
@@ -174,37 +182,41 @@ class _ActiveTypingScreenState extends ConsumerState<ActiveTypingScreen> {
   Widget _buildPredictionButton(String word) {
     return ElevatedButton(
       onPressed: () => _addWordToInput(word),
-      child: Text(word, overflow: TextOverflow.ellipsis), // ellipsis agar tidak luber
+      child: Text(word, overflow: TextOverflow.ellipsis),
     );
   }
 
   Widget _buildBackspaceButton() {
-    return ElevatedButton(
-      style: ElevatedButton.styleFrom(backgroundColor: AppColors.backspaceBackground),
-      onPressed: () {
-        if (_textController.text.isNotEmpty) {
-          // Bersihkan spasi di paling kanan terlebih dahulu untuk mendeteksi kata terakhir
-          final currentText = _textController.text.trimRight();
-          
-          // Cari posisi spasi terakhir sebelum kata paling ujung
-          final lastSpaceIndex = currentText.lastIndexOf(' ');
-          
-          if (lastSpaceIndex == -1) {
-            // Jika tidak ada spasi sama sekali (artinya hanya tersisa 1 kata), langsung kosongkan
-            _textController.clear();
-          } else {
-            // Potong kalimat sampai spasi terakhir tersebut, lalu beri spasi penutup lagi 
-            // supaya fitur prediksi kata berikutnya langsung aktif kembali
-            _textController.text = "${currentText.substring(0, lastSpaceIndex)} ";
+    return SizedBox(
+      height: 48, // Membuat tombol cukup besar untuk ditekan
+      child: ElevatedButton.icon(
+        // Sesuaikan warnanya dengan tema Anda (bisa abu-abu halus atau merah pudar)
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color.fromARGB(255, 255, 85, 85),
+          foregroundColor: AppColors.textPrimary,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppSizes.radiusM),
+          ),
+        ),
+        onPressed: () {
+          if (_textController.text.isNotEmpty) {
+            final currentText = _textController.text.trimRight();
+            final lastSpaceIndex = currentText.lastIndexOf(' ');
+            
+            if (lastSpaceIndex == -1) {
+              _textController.clear();
+            } else {
+              _textController.text = "${currentText.substring(0, lastSpaceIndex)} ";
+            }
+            
+            _textController.selection = TextSelection.fromPosition(
+              TextPosition(offset: _textController.text.length),
+            );
           }
-          
-          // Selalu pastikan posisi kursor teks berada di paling kanan
-          _textController.selection = TextSelection.fromPosition(
-            TextPosition(offset: _textController.text.length),
-          );
-        }
-      },
-      child: const Icon(Icons.backspace_outlined, color: AppColors.textPrimary),
+        },
+        icon: const Icon(Icons.backspace_outlined),
+        label: const Text("Hapus Kata"),
+      ),
     );
   }
 }
