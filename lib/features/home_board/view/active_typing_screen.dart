@@ -1,33 +1,68 @@
 import 'package:flutter/material.dart';
-import '../../../core/constants.dart'; // Sesuaikan lokasi folder Anda
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/constants.dart';
+import '../../word_prediction/controller/prediction_controller.dart';
+import '../../../features/tts_voice/controller/tts_controller.dart';
 
-class ActiveTypingScreen extends StatelessWidget {
+// Ubah menjadi ConsumerStatefulWidget agar bisa membaca Riverpod
+class ActiveTypingScreen extends ConsumerStatefulWidget {
   const ActiveTypingScreen({super.key});
 
   @override
+  ConsumerState<ActiveTypingScreen> createState() => _ActiveTypingScreenState();
+}
+
+class _ActiveTypingScreenState extends ConsumerState<ActiveTypingScreen> {
+  final TextEditingController _textController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    // Setiap kali user ngetik di keyboard, laporkan ke Riverpod!
+    _textController.addListener(() {
+      ref.read(inputTextProvider.notifier)
+    .updateText(_textController.text);
+    });
+  }
+
+  @override
+  void dispose() {
+    _textController.dispose();
+    super.dispose();
+  }
+
+  // Fungsi saat tombol prediksi ditekan
+  void _addWordToInput(String word) {
+    final currentText = _textController.text;
+    // Tambahkan kata baru dan beri spasi
+    final newText = currentText.isEmpty ? "$word " : "$currentText$word ";
+    
+    _textController.text = newText;
+    // Pindahkan kursor ke ujung kanan
+    _textController.selection = TextSelection.fromPosition(TextPosition(offset: newText.length));
+  }
+
+  @override
   Widget build(BuildContext context) {
+    // Pantau daftar prediksi dari database secara live!
+    final predictions = ref.watch(predictionListProvider);
+
+    final inputText = ref.watch(inputTextProvider);
+
     return Scaffold(
+      backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: const Text(
-          'Ruang Bicara',
-          style: TextStyle(
-            fontWeight: FontWeight.w600,
-            color: AppColors.textPrimary,
-            fontSize: 18,
-          ),
-        ),
+        title: const Text('Ruang Bicara', style: TextStyle(color: AppColors.textPrimary)),
         centerTitle: true,
         backgroundColor: Colors.transparent,
         elevation: 0,
-        // Mengubah warna tombol back (panah kembali) menjadi gelap agar kontras
         iconTheme: const IconThemeData(color: AppColors.textPrimary),
       ),
-      // SafeArea agar UI tidak tertutup poni (notch) HP
       body: SafeArea(
         child: Column(
           children: [
             // ==========================================
-            // 1. AREA TEKS UTAMA & TOMBOL SUARAKAN (FAB)
+            // 1. AREA TEKS UTAMA (Bukan TextField, hanya Tampilan)
             // ==========================================
             Expanded(
               child: Container(
@@ -35,35 +70,39 @@ class ActiveTypingScreen extends StatelessWidget {
                 margin: const EdgeInsets.all(AppSizes.p16),
                 padding: const EdgeInsets.all(AppSizes.p24),
                 decoration: BoxDecoration(
-                  color: AppColors.surface, // Warna putih bersih
+                  color: AppColors.surface,
                   borderRadius: BorderRadius.circular(AppSizes.radiusL),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.05), // Bayangan lembut ala Dribbble
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Teks Dummy (Nanti akan diganti dengan state Riverpod)
                     Expanded(
+                      // Teksnya sekarang membaca dari Riverpod, bukan teks statis lagi!
                       child: Text(
-                        "Saya mau makan",
-                        style: Theme.of(context).textTheme.displaySmall,
+                        inputText.isEmpty 
+                            ? "Ketik sesuatu..." 
+                            : inputText,
+                        style: Theme.of(context).textTheme.displaySmall?.copyWith(
+                          color: inputText.isEmpty 
+                              ? AppColors.textSecondary // Abu-abu kalau kosong
+                              : AppColors.textPrimary, // Gelap kalau ada isinya
+                        ),
                       ),
                     ),
-                    // Tombol Speaker (FAB) diposisikan di kanan bawah area putih
-                    // Dengan cara ini, FAB tidak akan pernah menutupi tulisan
                     Align(
                       alignment: Alignment.bottomRight,
                       child: FloatingActionButton(
+                        backgroundColor: AppColors.primary, // Sesuaikan warna tema kamu
                         onPressed: () {
-                          // TODO: Logika TTS (Suara AI) nanti di sini
+                          // Ambil teks yang ada di Riverpod saat ini
+                          final textToSpeak = ref.read(inputTextProvider);
+
+                          // Panggil fitur suara AI untuk membacakannya
+                          ref.read(ttsVoiceProvider).speak(textToSpeak);
+
+                          _textController.clear();
                         },
-                        child: const Icon(Icons.volume_up, size: AppSizes.iconLarge),
+                        child: const Icon(Icons.volume_up, color: Colors.white),
                       ),
                     ),
                   ],
@@ -72,42 +111,38 @@ class ActiveTypingScreen extends StatelessWidget {
             ),
 
             // ==========================================
-            // 2. GRID 6 TOMBOL PREDIKSI (5 Kata + 1 Hapus)
+            // 2. GRID 6 TOMBOL PREDIKSI 
             // ==========================================
             Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSizes.p16, 
-                vertical: AppSizes.p8,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: AppSizes.p16, vertical: AppSizes.p8),
               child: GridView.count(
                 shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(), // Mematikan scroll karena statis
-                crossAxisCount: 3, // 3 kolom
+                physics: const NeverScrollableScrollPhysics(),
+                crossAxisCount: 3,
                 mainAxisSpacing: AppSizes.p8,
                 crossAxisSpacing: AppSizes.p8,
-                childAspectRatio: 2.5, // Rasio lebar:tinggi tombol agar proporsional
+                childAspectRatio: 2.5,
                 children: [
-                  _buildPredictionButton("Nasi", context),
-                  _buildPredictionButton("Sate", context),
-                  _buildPredictionButton("Soto", context),
-                  _buildPredictionButton("Goreng", context),
-                  _buildPredictionButton("Ayam", context),
-                  _buildBackspaceButton(), // Slot ke-6 khusus hapus
+                  // Loop 5 kata dari database (Data dummy Riverpod)
+                  ...predictions.take(5).map((word) => _buildPredictionButton(word)),
+                  // Tombol ke-6 khusus Backspace
+                  _buildBackspaceButton(),
                 ],
               ),
             ),
 
             // ==========================================
-            // 3. AREA KEYBOARD (Input Teks Fisik)
+            // 3. AREA KEYBOARD (Input Fisik)
             // ==========================================
-            // Ini memancing keyboard HP standar untuk muncul
             Container(
               color: AppColors.surface,
               padding: const EdgeInsets.symmetric(horizontal: AppSizes.p16),
-              child: const TextField(
-                decoration: InputDecoration(
-                  hintText: "Ketik di sini...",
-                  border: InputBorder.none, // Dibuat polos agar menyatu dengan layar
+              child: TextField(
+                controller: _textController,
+                autofocus: true, // Otomatis buka keyboard
+                decoration: const InputDecoration(
+                  hintText: "Ketik via keyboard...",
+                  border: InputBorder.none,
                 ),
               ),
             ),
@@ -119,29 +154,24 @@ class ActiveTypingScreen extends StatelessWidget {
 
   // --- WIDGET BANTUAN UNTUK TOMBOL ---
 
-  // Tombol untuk kata prediksi
-  Widget _buildPredictionButton(String word, BuildContext context) {
+  Widget _buildPredictionButton(String word) {
     return ElevatedButton(
-      onPressed: () {
-        // TODO: Logika tambah kata ke kalimat utama
-      },
-      child: Text(word), // Teks akan otomatis mengikuti warna gelap di theme.dart
+      onPressed: () => _addWordToInput(word),
+      child: Text(word, overflow: TextOverflow.ellipsis), // ellipsis agar tidak luber
     );
   }
 
-  // Tombol abu-abu khusus untuk Backspace
   Widget _buildBackspaceButton() {
     return ElevatedButton(
-      style: ElevatedButton.styleFrom(
-        backgroundColor: AppColors.backspaceBackground, // Warna abu-abu netral
-      ),
+      style: ElevatedButton.styleFrom(backgroundColor: AppColors.backspaceBackground),
       onPressed: () {
-        // TODO: Logika hapus kata
+        if (_textController.text.isNotEmpty) {
+          // Logika hapus karakter (bisa dikembangkan jadi hapus kata penuh nanti)
+          _textController.text = _textController.text.substring(0, _textController.text.length - 1);
+          _textController.selection = TextSelection.fromPosition(TextPosition(offset: _textController.text.length));
+        }
       },
-      child: const Icon(
-        Icons.backspace_outlined, 
-        color: AppColors.textPrimary, // Ikon warna gelap agar kontras
-      ),
+      child: const Icon(Icons.backspace_outlined, color: AppColors.textPrimary),
     );
   }
 }

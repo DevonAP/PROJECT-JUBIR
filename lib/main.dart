@@ -1,16 +1,17 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart'; // Tambahkan ini
 import 'core/theme.dart';
 import 'features/home_board/view/welcome_screen.dart';
+import 'features/word_prediction/repository/prediction_repository.dart'; // Tambahkan ini
 
-void main() {
-  // Memastikan binding Flutter sudah siap sebelum aplikasi berjalan
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // TODO: Nanti Anggota B akan menambahkan inisialisasi database Hive di sini, contoh:
-  // await Hive.initFlutter();
-  // await Hive.openBox('prediction_box');
+  // Menyalakan database Hive sebelum UI digambar
+  await PredictionRepository.initDatabase();
 
-  runApp(const MyApp());
+  // Bungkus MyApp dengan ProviderScope agar Riverpod bisa berjalan
+  runApp(const ProviderScope(child: MyApp()));
 }
 
 class MyApp extends StatelessWidget {
