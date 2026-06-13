@@ -3,19 +3,17 @@
 import 'package:flutter/services.dart' show rootBundle;
 import 'dart:convert';
 import 'package:hive_flutter/hive_flutter.dart';
-import '../model/ngram_model.dart'; 
 
 class PredictionRepository {
   static const String _ngramBox = 'ngram_relations_box';
-  static const String _dictBox = 'dictionary_box'; // Box khusus untuk kamus JSON
+  static const String _dictBox = 'dictionary_box';
 
-  /// Inisialisasi Database 
   static Future<void> initDatabase() async {
     await Hive.initFlutter();
     final ngramBox = await Hive.openBox(_ngramBox);
     final dictBox = await Hive.openBox(_dictBox);
 
-    // 1. MASUKKAN JSON SEBAGAI FILTER (SATPAM)
+    // 1. Kamus Filter Typo[cite: 1]
     if (dictBox.isEmpty) {
       try {
         final String jsonString = await rootBundle.loadString('assets/sibi_dictionary.json');
@@ -24,103 +22,124 @@ class PredictionRepository {
         
         for (var word in kataDasarList) {
           if (word is String && word.isNotEmpty) {
-            // Simpan kata ke box kamus (huruf kecil semua agar mudah dicek)
             dictBox.put(word.toLowerCase(), true); 
           }
         }
       } catch (e) {
-        print("Error loading JSON: $e");
+        // Abaikan error saat build awal
       }
     }
 
-    // 2. SUNTIKAN DATA PRE-TRAINED N-GRAM
+    // 2. Pre-Trained Knowledge (O(1) Data Structure)
     if (ngramBox.isEmpty) {
       await _injectPreTrainedNgram(ngramBox);
     }
   }
 
   static Future<void> _injectPreTrainedNgram(Box box) async {
-    final List<Map<String, dynamic>> baseKnowledge = [
-      {"prev": "saya", "next": "mau", "freq": 100},
-      {"prev": "saya", "next": "lapar", "freq": 90},
-      {"prev": "saya", "next": "sakit", "freq": 80},
-      {"prev": "mau", "next": "makan", "freq": 100},
-      {"prev": "mau", "next": "minum", "freq": 90},
-      {"prev": "mau", "next": "pulang", "freq": 85},
-      {"prev": "mau", "next": "ke", "freq": 80},
-      {"prev": "ke", "next": "kamar", "freq": 100},
-      {"prev": "kamar", "next": "mandi", "freq": 100},
-      {"prev": "kamar", "next": "tidur", "freq": 90},
-      {"prev": "tolong", "next": "bantu", "freq": 100},
-      {"prev": "terima", "next": "kasih", "freq": 100},
-    ];
+    try {
+      // 1. Baca file JSON asli dari folder assets
+      final String jsonString = await rootBundle.loadString('assets/pretrained_ngram.json');
+      
+      // 2. Decode JSON tersebut menjadi Map (Kamus)
+      final Map<String, dynamic> baseKnowledge = jsonDecode(jsonString);
 
-    for (var data in baseKnowledge) {
-      final relationKey = "${data['prev']}_${data['next']}";
-      final model = NgramRelation(
-        previousWord: data['prev'],
-        nextWord: data['next'],
-        frequency: data['freq'],
-      );
-      await box.put(relationKey, model.toMap());
+      // 3. Masukkan datanya ke dalam Hive Database secara instan
+      for (var entry in baseKnowledge.entries) {
+        // Kita masukkan key (misal: "saya_mau") dan valuenya (list prediksinya)
+        await box.put(entry.key, entry.value);
+      }
+      
+      print("SUKSES: Dataset N-Gram berhasil disuntikkan! Jumlah konteks: ${baseKnowledge.length}");
+    } catch (e) {
+      print("GAGAL memuat dataset N-Gram: $e");
     }
   }
 
-  /// FUNGSI AI BELAJAR RELASI BARU (DENGAN FILTER TYPO)
-  Future<void> learnRelation(String previousWord, String currentWord) async {
-    if (previousWord.isEmpty || currentWord.isEmpty) return;
-    
-    // --- LOGIKA SATPAM (FILTER TYPO) ---
+  /// FUNGSI AI BELAJAR (MENDUKUNG TRIGRAM & BIGRAM)
+  Future<void> learnRelationContext(List<String> words) async {
+    if (words.length < 2) return;
+
     final dictBox = Hive.box(_dictBox);
-    
-    // Jika salah satu kata tidak ada di kamus JSON SIBI, langsung batalkan! (Abaikan typo)
-    if (!dictBox.containsKey(previousWord.toLowerCase()) || 
-        !dictBox.containsKey(currentWord.toLowerCase())) {
-      return; 
-    }
-    // -----------------------------------
+    String target = words.last.toLowerCase();
+    String prev1 = words[words.length - 2].toLowerCase();
 
-    // Jika kata valid, baru AI boleh menyimpannya/menaikkan frekuensinya
-    final box = Hive.box(_ngramBox);
-    final String relationKey = "${previousWord.toLowerCase()}_${currentWord.toLowerCase()}";
-    
-    final existingData = box.get(relationKey);
-    
-    if (existingData != null) {
-      final model = NgramRelation.fromMap(existingData);
-      final updatedModel = NgramRelation(
-        previousWord: model.previousWord,
-        nextWord: model.nextWord,
-        frequency: model.frequency + 1, 
-      );
-      await box.put(relationKey, updatedModel.toMap());
-    } else {
-      final newModel = NgramRelation(
-        previousWord: previousWord.toLowerCase(),
-        nextWord: currentWord.toLowerCase(),
-        frequency: 1,
-      );
-      await box.put(relationKey, newModel.toMap());
+    // Validasi Typo: Pastikan kata ada di kamus
+    if (!dictBox.containsKey(target) || !dictBox.containsKey(prev1)) return;
+
+    // 1. Simpan Bigram (1 Kata -> Target)
+    await _saveNgram(prev1, target);
+
+    // 2. Simpan Trigram (2 Kata -> Target)
+    if (words.length >= 3) {
+      String prev2 = words[words.length - 3].toLowerCase();
+      if (dictBox.containsKey(prev2)) {
+        await _saveNgram("${prev2}_$prev1", target);
+      }
     }
   }
 
-  /// FUNGSI AI MENGAMBIL PREDIKSI KATA SELANJUTNYA
-  List<String> getNextWordPrediction(String lastWord) {
-    if (lastWord.isEmpty) return [];
-
+  /// CORE LOGIC O(1) SAVING 
+  Future<void> _saveNgram(String contextKey, String targetWord) async {
     final box = Hive.box(_ngramBox);
-    List<NgramRelation> candidates = [];
+    
+    // Ambil list prediksi yang sudah ada untuk konteks ini (O(1) Lookup)
+    List<dynamic> rawList = box.get(contextKey, defaultValue: []);
+    
+    // Konversi ke format yang bisa diedit
+    List<Map<String, dynamic>> predictions = rawList.map((e) => Map<String, dynamic>.from(e as Map)).toList();
 
-    for (var value in box.values) {
-      if (value is Map) {
-        final model = NgramRelation.fromMap(value);
-        if (model.previousWord == lastWord.toLowerCase()) {
-          candidates.add(model);
-        }
+    bool found = false;
+    for (int i = 0; i < predictions.length; i++) {
+      if (predictions[i]['word'] == targetWord) {
+        predictions[i]['freq'] = (predictions[i]['freq'] as int) + 1; // Naikkan frekuensi
+        found = true;
+        break;
       }
     }
 
-    candidates.sort((a, b) => b.frequency.compareTo(a.frequency));
-    return candidates.map((e) => e.nextWord).take(5).toList();
+    if (!found) {
+      // Jika kata baru, tambahkan ke list
+      predictions.add({'word': targetWord, 'freq': 1});
+    }
+
+    // Trik Mahadewa: Urutkan list SAAT DISIMPAN, bukan saat dibaca.
+    // Ini membuat proses membaca (Prediksi) menjadi 0.000 milidetik!
+    predictions.sort((a, b) => (b['freq'] as int).compareTo(a['freq'] as int));
+
+    // Simpan kembali ke Hive
+    await box.put(contextKey, predictions);
+  }
+
+  /// FUNGSI PREDIKSI KATZ'S BACKOFF (O(1) RETRIEVAL)
+  List<String> getNextWordPrediction(List<String> words) {
+    if (words.isEmpty) return [];
+
+    final box = Hive.box(_ngramBox);
+    String prev1 = words.last.toLowerCase();
+    
+    Set<String> finalPredictions = {}; // Set agar tidak ada kata duplikat
+
+    // 1. Cek Trigram (Instan O(1))
+    if (words.length >= 2) {
+      String prev2 = words[words.length - 2].toLowerCase();
+      String trigramContext = "${prev2}_$prev1";
+      
+      List<dynamic> trigramData = box.get(trigramContext, defaultValue: []);
+      for (var item in trigramData) {
+        finalPredictions.add(item['word'] as String);
+      }
+    }
+
+    // 2. Cek Bigram (Instan O(1)) - Backoff jika Trigram tidak cukup
+    if (finalPredictions.length < 6) {
+      List<dynamic> bigramData = box.get(prev1, defaultValue: []);
+      for (var item in bigramData) {
+        finalPredictions.add(item['word'] as String);
+        if (finalPredictions.length >= 6) break; // Berhenti jika sudah dapat 6 kata
+      }
+    }
+
+    return finalPredictions.toList();
   }
 }

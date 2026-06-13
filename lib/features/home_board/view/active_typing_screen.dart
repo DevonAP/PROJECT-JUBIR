@@ -50,13 +50,8 @@ class _ActiveTypingScreenState extends State<ActiveTypingScreen> {
     _textController.text = newText;
     _textController.selection = TextSelection.fromPosition(TextPosition(offset: newText.length));
 
-    final words = newText.trim().split(' ');
-    if (words.length >= 2) {
-      final prevWord = words[words.length - 2]; 
-      final currentWord = words[words.length - 1]; 
-      
-      context.read<PredictionController>().learnUserHabit(prevWord, currentWord);
-    }
+    // Kirim seluruh teks baru ke Controller, biar Controller yang memecah Trigram/Bigram-nya
+    context.read<PredictionController>().learnFromButtonPress(newText);
   }
 
   @override
@@ -111,17 +106,34 @@ class _ActiveTypingScreenState extends State<ActiveTypingScreen> {
                         ),
                       ),
                     ),
-                    Align(
-                      alignment: Alignment.bottomRight,
-                      child: FloatingActionButton(
-                        backgroundColor: AppColors.primary, 
-                        onPressed: () {
-                          final textToSpeak = context.read<PredictionController>().inputText;
-                          context.read<TtsController>().speak(textToSpeak);
-                          _textController.clear();
-                        },
-                        child: const Icon(Icons.volume_up, color: Colors.white),
-                      ),
+                    // ==========================================
+                    // BARIS BAWAH: TANDA BACA & FAB SUARA
+                    // ==========================================
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        // Tombol Tanda Baca (Kiri)
+                        Row(
+                          children: [
+                            _buildPunctuationButton('.'),
+                            const SizedBox(width: AppSizes.p32),
+                            _buildPunctuationButton('?'),
+                            const SizedBox(width: AppSizes.p32),
+                            _buildPunctuationButton('!'),
+                          ],
+                        ),
+                        // Tombol Speaker FAB (Kanan)
+                        FloatingActionButton(
+                          backgroundColor: AppColors.primary, 
+                          onPressed: () {
+                            final textToSpeak = context.read<PredictionController>().inputText;
+                            context.read<TtsController>().speak(textToSpeak);
+                            _textController.clear();
+                          },
+                          child: const Icon(Icons.volume_up, color: Colors.white),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -216,6 +228,47 @@ class _ActiveTypingScreenState extends State<ActiveTypingScreen> {
         },
         icon: const Icon(Icons.backspace_outlined),
         label: const Text("Hapus Kata"),
+      ),
+    );
+  }
+
+// --- WIDGET BANTUAN UNTUK TANDA BACA ---
+
+  void _addPunctuation(String punctuation) {
+    // Hapus spasi di akhir kalimat (jika ada) agar tanda baca menempel ke huruf terakhir
+    final currentText = _textController.text.trimRight(); 
+    
+    if (currentText.isNotEmpty) {
+      // Tambahkan tanda baca dan spasi baru setelahnya
+      final newText = "$currentText$punctuation ";
+      
+      _textController.text = newText;
+      _textController.selection = TextSelection.fromPosition(TextPosition(offset: newText.length));
+    }
+  }
+
+  Widget _buildPunctuationButton(String symbol) {
+    return InkWell(
+      onTap: () => _addPunctuation(symbol),
+      borderRadius: BorderRadius.circular(AppSizes.radiusM),
+      child: Container(
+        height: 48, // Tingginya disamakan dengan standar tombol yang nyaman disentuh
+        width: 48,
+        decoration: BoxDecoration(
+          color: Colors.transparent,
+          border: Border.all(color: AppColors.primary.withOpacity(0.5), width: 1.5),
+          borderRadius: BorderRadius.circular(AppSizes.radiusM),
+        ),
+        child: Center(
+          child: Text(
+            symbol,
+            style: const TextStyle(
+              fontSize: 24, 
+              fontWeight: FontWeight.bold, 
+              color: AppColors.primary,
+            ),
+          ),
+        ),
       ),
     );
   }
